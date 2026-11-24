@@ -1,6 +1,8 @@
 # kb-rag-agent — 个人知识库 RAG 问答
 
-基于 Next.js 15 + LangChain.js + LanceDB 的个人知识库问答应用：把 `docs/*.md` 语料切块、向量化存入本地 LanceDB，提问时做 top-5 相似检索，再由火山方舟大模型流式生成带引用标注 [1][2] 的回答。
+基于 Next.js 15 + LangChain.js + LanceDB 的个人知识库问答应用：把 `docs/*.md` 语料切块、向量化存入本地 LanceDB，提问时做 top-5 相似检索，再由大模型（火山方舟 / 本地 Ollama 均可）流式生成带引用标注 [1][2] 的回答。
+
+![界面截图](assets/screenshot.png)
 
 ## 架构
 
@@ -34,7 +36,10 @@ flowchart LR
 - Next.js 15（App Router）+ TypeScript + React 19
 - LangChain.js：`@langchain/core` / `@langchain/openai`（OpenAI 兼容客户端接火山方舟）/ `@langchain/textsplitters`
 - 向量库：`@lancedb/lancedb`（嵌入式）
-- 模型服务：火山方舟 OpenAI 兼容端点（chat：`deepseek-v4-1-flash-261017`，embedding：`doubao-embedding-large-text-250515`，均可用 env 覆盖）
+- 模型服务（二选一，env 切换）：
+  - 火山方舟 OpenAI 兼容端点（chat：`deepseek-v4-1-flash-261017`，embedding：`doubao-embedding-large-text-250515`）
+  - **本地 Ollama（零 API 成本，推荐演示用）**：chat `qwen2.5:7b`、embedding `nomic-embed-text`，`ARK_BASE_URL=http://localhost:11434/v1`、`ARK_API_KEY=ollama` 即可
+  - 注意：Ollama 从 GGUF 导入模型时默认模板是 `{{ .Prompt }}`，必须显式补 ChatML TEMPLATE 和 stop（见 `.env.example` 注释），否则 system prompt 不生效
 
 ## Quickstart
 
@@ -98,8 +103,14 @@ data: [DONE]
 - 2026-11-24 `npm install`：通过（356 个包）。
 - 2026-11-24 `npm run build`：通过（Next.js 15.5.29 生产构建 + 类型检查 + lint 无告警）。
 - 2026-11-24 `npm run lint`：通过（0 问题）。
-- 2026-11-24 `npm run dev` + curl 冒烟：`GET /` 返回 200；`POST /api/chat`（问「他的核心优势是什么」）请求正常到达火山方舟并返回错误透传，接线正确。
-- **待补**：本次开发时方舟账号处于欠费/未开通状态，`ingest` 调 embedding 返回 `404 InvalidEndpointOrModel.NotFound`，chat 返回 `403 AccountOverdueError`（欠费），因此「真实摄入 + 端到端流式问答」未能完成。账号恢复欠费后依次执行 `npm run ingest`（预期输出切块数与写入向量数）和下方 curl 即可复验：
+- 2026-11-24 端到端验收（本地 Ollama：qwen2.5:7b + nomic-embed-text）：
+  - `npm run ingest`：2 份语料切块 33 个，33 条向量全部写入 LanceDB ✅
+  - `GET /` 200，页面标题「kb-rag-agent · 个人知识库问答」✅
+  - `POST /api/chat` 问「他的核心优势是什么」：SSE 依次返回 sources（resume.md 引用 + 相似度 0.70/0.67/0.62）→ 313 个 delta → done；回答正文含 [1][2][4][5] 引用标注，内容与简历原文一致 ✅
+  - 问「kids-one-shot 是怎么编排多模型的」：正确归纳三阶段流水线（文本→视觉分镜→语音合成），引用 [4][5] ✅
+  - 拒答测试「特斯拉今年销量多少」：直接返回「知识库中没有相关信息。」✅
+
+  复验命令：
 
   ```bash
   npm run ingest
@@ -107,7 +118,6 @@ data: [DONE]
   curl -s -N -X POST http://localhost:3000/api/chat \
     -H 'Content-Type: application/json' \
     -d '{"message":"他的核心优势是什么"}'
-  # 预期：先收到 sources 事件（含 resume.md 引用与相似度），随后多个 delta 事件流式拼出回答，正文含 [1] 类标注
   ```
 
 ## Roadmap
